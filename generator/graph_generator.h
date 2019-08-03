@@ -63,7 +63,7 @@ static inline int32_t get_v1_from_edge(const packed_edge* p) {
 }
 
 static inline void write_edge(packed_edge* p, int64_t v0, int64_t v1) {
-  printf("write_edge_32 :%ld %ld\n", v0, v1);
+  // printf("write_edge_32 :%ld %ld\n", v0, v1);
   p->v0 = (uint32_t)v0;
   p->v1 = (uint32_t)v1;
 }

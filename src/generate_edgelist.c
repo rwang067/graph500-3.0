@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
 					//write files
 					FILE *fp;
 					fp=fopen(filename,"w");
-					int i;
+					int i = 0;
 					for(i = 0; i < edge_count; i++)
 						fprintf(fp,"%d %d\n",actual_buf[i].v0,actual_buf[i].v1 );
 					fclose(fp);
