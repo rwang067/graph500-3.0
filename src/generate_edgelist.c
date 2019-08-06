@@ -31,7 +31,6 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-
 int main(int argc, char** argv) {
 	aml_init(&argc,&argv); //includes MPI_Init inside
 	setup_globals();
@@ -39,9 +38,11 @@ int main(int argc, char** argv) {
 	/* Parse arguments. */
 	int SCALE = 16;
 	int edgefactor = 16; /* nedges / nvertices, i.e., 2*avg. degree */
+	char* filename = "kron.txt";
 	if (argc >= 2) SCALE = atoi(argv[1]);
 	if (argc >= 3) edgefactor = atoi(argv[2]);
-	if (argc <= 1 || argc >= 4 || SCALE == 0 || edgefactor == 0) {
+	if (argc >= 4) filename = argv[3];
+	if (argc <= 1 || argc >= 5 || SCALE == 0 || edgefactor == 0) {
 		if (rank == 0) {
 			fprintf(stderr, "Usage: %s SCALE edgefactor\n  SCALE = log_2(# vertices) [integer, required]\n  edgefactor = (# edges) / (# vertices) = .5 * (average vertex degree) [integer, defaults to 16]\n(Random number seed and Kronecker initiator are in main.c)\n", argv[0]);
 		}
@@ -50,7 +51,6 @@ int main(int argc, char** argv) {
 	uint64_t seed1 = 2, seed2 = 3;
 
 	// const char* filename = getenv("TMPFILE");
-	const char* filename = "kron.txt";
 
 	const int reuse_file = getenv("REUSEFILE")? 1 : 0;
 	/* If filename is NULL, store data in memory */
@@ -58,6 +58,7 @@ int main(int argc, char** argv) {
 	tuple_graph tg;
 	tg.nglobaledges = (int64_t)(edgefactor) << SCALE;
 	int64_t nglobalverts = (int64_t)(1) << SCALE;
+	fprintf(stderr, "nglobaledges = %ld, nglobalverts = %ld\n", tg.nglobaledges, nglobalverts);
 
 	tg.data_in_file = 0;
 	tg.write_file = 1;
@@ -80,6 +81,7 @@ int main(int argc, char** argv) {
 		 * row), and then do an allreduce at the end.  This scheme is used to avoid
 		 * non-local communication and reading the file separately just to find BFS
 		 * roots. */
+
 		MPI_Offset nchunks_in_file = (tg.nglobaledges + FILE_CHUNKSIZE - 1) / FILE_CHUNKSIZE;
 		int64_t bitmap_size_in_bytes = int64_min(BITMAPSIZE, (nglobalverts + CHAR_BIT - 1) / CHAR_BIT);
 		if (bitmap_size_in_bytes * size * CHAR_BIT < nglobalverts) {
@@ -109,6 +111,7 @@ int main(int argc, char** argv) {
 			/* Every rank in a given row creates the same vertices (for updating the
 			 * bitmap); only one writes them to the file (or final memory buffer). */
 			packed_edge* buf = (packed_edge*)xmalloc(FILE_CHUNKSIZE * sizeof(packed_edge));
+			fprintf(stderr, "xmalloc buf by = %d * %d bytes\n", FILE_CHUNKSIZE, sizeof(packed_edge));
 
 			MPI_Offset block_limit = (nchunks_in_file + nrows - 1) / nrows;
 			/* fprintf(stderr, "%d: nchunks_in_file = %" PRId64 ", block_limit = %" PRId64 " in grid of %d rows, %d cols\n", rank, (int64_t)nchunks_in_file, (int64_t)block_limit, nrows, ranks_per_row); */
@@ -124,36 +127,41 @@ int main(int argc, char** argv) {
 				int64_t nedges = FILE_CHUNKSIZE * (tg.nglobaledges / ((int64_t)FILE_CHUNKSIZE * nrows * ranks_per_row)) +
 					FILE_CHUNKSIZE * (my_pos < (tg.nglobaledges / FILE_CHUNKSIZE) % (nrows * ranks_per_row)) +
 					(my_pos == last_pos ? edges_left : 0);
-				/* fprintf(stderr, "%d: nedges = %" PRId64 " of %" PRId64 "\n", rank, (int64_t)nedges, (int64_t)tg.nglobaledges); */
+				// fprintf(stderr, "%d: nedges = %" PRId64 " of %" PRId64 "\n", rank, (int64_t)nedges, (int64_t)tg.nglobaledges);
 				tg.edgememory_size = nedges;
-				tg.edgememory = (packed_edge*)xmalloc(nedges * sizeof(packed_edge));
+				// tg.edgememory = (packed_edge*)xmalloc(nedges * sizeof(packed_edge));
 
 			}
 			MPI_Offset block_idx;
+			
+			//write files
+			FILE *fp;
+			fp=fopen(filename,"w");
 			for (block_idx = 0; block_idx < block_limit; ++block_idx) {
 				fprintf(stderr, "%d: On block %d of %d\n", rank, (int)block_idx, (int)block_limit); 
 				MPI_Offset start_edge_index = int64_min(FILE_CHUNKSIZE * (block_idx * nrows + my_row), tg.nglobaledges);
 				MPI_Offset edge_count = int64_min(tg.nglobaledges - start_edge_index, FILE_CHUNKSIZE);
-				packed_edge* actual_buf = (!tg.data_in_file && block_idx % ranks_per_row == my_col) ?
-					tg.edgememory + FILE_CHUNKSIZE * (block_idx / ranks_per_row) :
-					buf;
+				// packed_edge* actual_buf = (!tg.data_in_file && block_idx % ranks_per_row == my_col) ?
+				// 	tg.edgememory + FILE_CHUNKSIZE * (block_idx / ranks_per_row) :
+				// 	buf;
+				packed_edge* actual_buf = buf;
 
 				fprintf(stderr, "%d: My range is [%" PRId64 ", %" PRId64 ") %swriting into index %" PRId64 "\n", rank, (int64_t)start_edge_index, (int64_t)(start_edge_index + edge_count), (my_col == (block_idx % ranks_per_row)) ? "" : "not ", (int64_t)(FILE_CHUNKSIZE * (block_idx / ranks_per_row))); 
-				if (!tg.data_in_file && block_idx % ranks_per_row == my_col) {
-					assert (FILE_CHUNKSIZE * (block_idx / ranks_per_row) + edge_count <= tg.edgememory_size);
-				}
+				// if (!tg.data_in_file && block_idx % ranks_per_row == my_col) {
+				// 	assert (FILE_CHUNKSIZE * (block_idx / ranks_per_row) + edge_count <= tg.edgememory_size);
+				// }
 				if (tg.write_file) {
 					generate_kronecker_range(seed, SCALE, start_edge_index, start_edge_index + edge_count, actual_buf);
 
 					if(tg.edgefile != NULL) fprintf(stderr, "Write graph to file , filename = %s, edge_count = %d\n", filename, edge_count);
 
-					//write files
-					FILE *fp;
-					fp=fopen(filename,"w");
+					// //write files
+					// FILE *fp;
+					// fp=fopen(filename,"w");
 					int i = 0;
 					for(i = 0; i < edge_count; i++)
 						fprintf(fp,"%d %d\n",actual_buf[i].v0,actual_buf[i].v1 );
-					fclose(fp);
+					// fclose(fp);
 
 					if (tg.data_in_file && my_col == (block_idx % ranks_per_row)) { /* Try to spread writes among ranks */
 						MPI_File_write_at(tg.edgefile, start_edge_index, actual_buf, edge_count, packed_edge_mpi_type, MPI_STATUS_IGNORE);
@@ -165,6 +173,7 @@ int main(int argc, char** argv) {
 
 				}
 			}
+			fclose(fp);
 			free(buf);
 			MPI_Comm_free(&this_col);
 		} else {
@@ -172,7 +181,7 @@ int main(int argc, char** argv) {
 			tg.edgememory_size = 0;
 
 		}
-		MPI_Allreduce(&tg.edgememory_size, &tg.max_edgememory_size, 1, MPI_INT64_T, MPI_MAX, MPI_COMM_WORLD);
+		// MPI_Allreduce(&tg.edgememory_size, &tg.max_edgememory_size, 1, MPI_INT64_T, MPI_MAX, MPI_COMM_WORLD);
 		if (tg.data_in_file && tg.write_file) {
 			MPI_File_sync(tg.edgefile);
 
